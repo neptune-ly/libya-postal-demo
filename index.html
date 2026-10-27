@@ -44,10 +44,10 @@ a{color:var(--accent)}
     <button class="alt">Nearby</button>
   </form>
   <section id="out" aria-live="polite"><p>Enter a code, or tap Use my location.</p></section>
-  <p>API: <code id="api"></code>. Change it with <code>?api=https://host/api/web</code>.</p>
+  <p>API: <code id="api"></code>.</p>
 </main>
 <script>
-const API = (new URLSearchParams(location.search).get('api') || 'https://test.npa.ly/api/web').replace(/\/$/, '');
+const API = 'https://test.npa.ly/api/web'; // fixed on purpose: a ?api= override would let a crafted link send your location elsewhere
 const $ = (id) => document.getElementById(id);
 $('api').textContent = API;
 let tok = null, exp = 0;
@@ -75,7 +75,7 @@ const dist = (a, b) => {
   return 2 * R * Math.asin(Math.sqrt(h));
 };
 function show(list, center) {
-  const rows = list.map((a) => ({ code: `${a.area}.${a.zone}.${a.building}`, lat: +a.position.latitude, lng: +a.position.longitude }));
+  const rows = list.map((a) => ({ code: [a.area, a.zone, a.building].map(Number).join('.'), lat: +a.position.latitude, lng: +a.position.longitude }));
   if (center) rows.forEach((x) => (x.d = dist(center, x))), rows.sort((a, b) => a.d - b.d);
   $('out').innerHTML = '<ul>' + rows.slice(0, 30).map((x) =>
     `<li><span class="code">${x.code}</span><span class="meta">${x.d != null ? Math.round(x.d) + ' m · ' : ''}<a href="https://www.google.com/maps?q=${x.lat},${x.lng}" target="_blank" rel="noopener">${x.lat.toFixed(5)}, ${x.lng.toFixed(5)}</a></span></li>`).join('') + '</ul>' +
