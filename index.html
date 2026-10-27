@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Libya Postal Address demo</title>
+<style>
+:root{--bg:#f6f5f1;--fg:#1c1f1d;--mute:#5d6560;--line:#d9d6cc;--card:#fff;--accent:#0b6b4f;--on:#fff;--err:#b3261e}
+@media(prefers-color-scheme:dark){:root{--bg:#121513;--fg:#e8ebe7;--mute:#9aa39d;--line:#2a302c;--card:#1a1e1b;--accent:#4fc39a;--on:#06140e;--err:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,-apple-system,sans-serif;padding:20px max(16px,env(safe-area-inset-right)) 40px max(16px,env(safe-area-inset-left))}
+main{max-width:520px;margin:0 auto;display:grid;gap:20px}
+h1{font-size:1.25rem;margin:0}
+p{margin:0;color:var(--mute);font-size:.9rem}
+form,.row{display:flex;gap:8px}
+input{flex:1;min-width:0;font:inherit;padding:12px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
+button{font:inherit;font-weight:600;padding:12px 16px;border:0;border-radius:6px;background:var(--accent);color:var(--on)}
+button.alt{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+input:focus-visible,button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+ul{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
+li{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.code{font-size:1.2rem;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.meta{color:var(--mute);font-size:.85rem;text-align:right}
+a{color:var(--accent)}
+#out .err{color:var(--err)}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Libya Postal Address</h1>
+    <p>Live lookups against the NPA service, straight from your browser.</p>
+  </header>
+  <form id="f">
+    <input id="code" inputmode="numeric" autocomplete="off" placeholder="Code, e.g. 11.53.130" aria-label="Postal code">
+    <button>Find</button>
+  </form>
+  <div class="row">
+    <button class="alt" id="here" type="button" style="flex:1">Use my location</button>
+  </div>
+  <form id="g">
+    <input id="lat" inputmode="decimal" placeholder="Latitude" aria-label="Latitude" value="32.8698">
+    <input id="lng" inputmode="decimal" placeholder="Longitude" aria-label="Longitude" value="13.1411">
+    <button class="alt">Nearby</button>
+  </form>
+  <section id="out" aria-live="polite"><p>Enter a code, or tap Use my location.</p></section>
+  <p>API: <code id="api"></code>. Change it with <code>?api=https://host/api/web</code>.</p>
+</main>
+<script>
+const API = (new URLSearchParams(location.search).get('api') || 'https://test.npa.ly/api/web').replace(/\/$/, '');
+const $ = (id) => document.getElementById(id);
+$('api').textContent = API;
+let tok = null, exp = 0;
+
+async function token(force) {
+  if (!force && tok && Date.now() < exp) return tok;
+  const r = await fetch(API + '/token', { method: 'POST' });
+  if (!r.ok) throw new Error('Token request failed (' + r.status + ')');
+  const j = await r.json();
+  tok = j.token; exp = Date.now() + (j.expires_in - 5) * 1000;
+  return tok;
+}
+async function call(path, q, retry = true) {
+  const r = await fetch(API + path + '?' + new URLSearchParams(q), { headers: { Authorization: 'Bearer ' + await token() } });
+  if (r.status === 401 && retry) { await token(true); return call(path, q, false); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    if (r.status === 404) throw new Error('No address found there.');
+    throw new Error(j.errors ? Object.values(j.errors).flat().join(' ') : j.message || 'Request failed (' + r.status + ')');
+  }
+  return j.addresses;
+}
+const dist = (a, b) => {
+  const R = 6371009, r = (d) => d * Math.PI / 180, h = Math.sin(r(b.lat - a.lat) / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(r(b.lng - a.lng) / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+};
+function show(list, center) {
+  const rows = list.map((a) => ({ code: `${a.area}.${a.zone}.${a.building}`, lat: +a.position.latitude, lng: +a.position.longitude }));
+  if (center) rows.forEach((x) => (x.d = dist(center, x))), rows.sort((a, b) => a.d - b.d);
+  $('out').innerHTML = '<ul>' + rows.slice(0, 30).map((x) =>
+    `<li><span class="code">${x.code}</span><span class="meta">${x.d != null ? Math.round(x.d) + ' m · ' : ''}<a href="https://www.google.com/maps?q=${x.lat},${x.lng}" target="_blank" rel="noopener">${x.lat.toFixed(5)}, ${x.lng.toFixed(5)}</a></span></li>`).join('') + '</ul>' +
+    (rows.length > 30 ? `<p>Showing 30 of ${rows.length}.</p>` : '');
+}
+const fail = (e) => ($('out').innerHTML = '<p class="err"></p>', $('out').firstChild.textContent = e.message);
+const run = (fn) => { $('out').innerHTML = '<p>Loading…</p>'; fn().catch(fail); };
+const nearby = (lat, lng) => run(async () => show(await call('/nearby-addresses', { latitude: lat, longitude: lng }), { lat, lng }));
+
+$('f').onsubmit = (e) => {
+  e.preventDefault();
+  const p = $('code').value.replace(/[٠-٩]/g, (c) => c.charCodeAt(0) - 1632).trim().split(/[\s.\-\/,]+/);
+  if (p.length !== 3 || !p.every((s) => /^\d{1,6}$/.test(s))) return fail(new Error('Use the form area.zone.building, e.g. 11.53.130'));
+  const [area, zone, building] = p.map(Number);
+  run(async () => show(await call('/address-details', { area, zone, building })));
+};
+$('g').onsubmit = (e) => { e.preventDefault(); nearby(+$('lat').value, +$('lng').value); };
+$('here').onclick = () => {
+  if (!navigator.geolocation) return fail(new Error('This browser has no location access.'));
+  navigator.geolocation.getCurrentPosition(
+    (p) => { $('lat').value = p.coords.latitude.toFixed(5); $('lng').value = p.coords.longitude.toFixed(5); nearby(p.coords.latitude, p.coords.longitude); },
+    () => fail(new Error('Location was blocked. Allow it for this site, or type coordinates.')),
+    { enableHighAccuracy: true, timeout: 10000 });
+};
+</script>
+</body>
+</html>
